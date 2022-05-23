@@ -1,13 +1,14 @@
+import functools
+import json
+import os
+
+import numpy as np
 import torch
 import torch.nn as nn
-from torch.nn import init
 import torch.nn.functional as F
 from torch.autograd import Variable
+from torch.nn import init
 from torch.optim import lr_scheduler
-
-import functools, os
-import numpy as np
-import json
 
 from metric import Metric
 
@@ -17,16 +18,17 @@ basic = 3
 from dataset.postgres_tpch_dataset.tpch_utils import tpch_dim_dict
 
 # Terrier
-with open('dataset/terrier_tpch_dataset/input_dim_dict.json', 'r') as f:
+with open("dataset/terrier_tpch_dataset/input_dim_dict.json", "r") as f:
     terrier_dim_dict = json.load(f)
 
 # TPCC
-with open('./dataset/oltp_dataset/tpcc_dim_dict.json', 'r') as f:
+with open("./dataset/oltp_dataset/tpcc_dim_dict.json", "r") as f:
     tpcc_dim_dict = json.load(f)
 
 # For computing loss
 def squared_diff(output, target):
-    return torch.sum((output - target)**2)
+    return torch.sum((output - target) ** 2)
+
 
 ###############################################################################
 #                        Operator Neural Unit Architecture                    #
@@ -35,15 +37,23 @@ def squared_diff(output, target):
 class NeuralUnit(nn.Module):
     """Define a Resnet block"""
 
-    def __init__(self, node_type, dim_dict, num_layers=5, hidden_size=128,
-                 output_size=32, norm_enabled=False):
+    def __init__(
+        self,
+        node_type,
+        dim_dict,
+        num_layers=5,
+        hidden_size=128,
+        output_size=32,
+        norm_enabled=False,
+    ):
         """
         Initialize the InternalUnit
         """
         super(NeuralUnit, self).__init__()
         self.node_type = node_type
-        self.dense_block = self.build_block(num_layers, hidden_size, output_size,
-                                            input_dim = dim_dict[node_type])
+        self.dense_block = self.build_block(
+            num_layers, hidden_size, output_size, input_dim=dim_dict[node_type]
+        )
 
     def build_block(self, num_layers, hidden_size, output_size, input_dim):
         """Construct a block consisting of linear Dense layers.
@@ -55,7 +65,7 @@ class NeuralUnit(nn.Module):
             norm_layer                  -- normalization layer
         Returns a conv block (with a conv layer, a normalization layer, and a non-linearity layer (ReLU))
         """
-        assert(num_layers >= 2)
+        assert num_layers >= 2
         dense_block = [nn.Linear(input_dim, hidden_size), nn.ReLU()]
         for i in range(num_layers - 2):
             dense_block += [nn.Linear(hidden_size, hidden_size), nn.ReLU()]
@@ -69,18 +79,23 @@ class NeuralUnit(nn.Module):
         return nn.Sequential(*dense_block)
 
     def forward(self, x):
-        """ Forward function """
+        """Forward function"""
         out = self.dense_block(x)
         return out
+
 
 ###############################################################################
 #                               QPP Net Architecture                          #
 ###############################################################################
 
-class QPPNet():
+
+class QPPNet:
     def __init__(self, opt):
-        self.device = torch.device('cuda:0') if torch.cuda.is_available() \
-                                             else torch.device('cpu:0')
+        self.device = (
+            torch.device("cuda:0")
+            if torch.cuda.is_available()
+            else torch.device("cpu:0")
+        )
         self.save_dir = opt.save_dir
         self.test = False
         self.test_time = opt.test_time
@@ -111,15 +126,18 @@ class QPPNet():
         for operator in self.dim_dict:
             self.units[operator] = NeuralUnit(operator, self.dim_dict).to(self.device)
             if opt.SGD:
-                optimizer = torch.optim.SGD(self.units[operator].parameters(),
-                                            lr=opt.lr, momentum=0.9)
+                optimizer = torch.optim.SGD(
+                    self.units[operator].parameters(), lr=opt.lr, momentum=0.9
+                )
             else:
-                optimizer = torch.optim.Adam(self.units[operator].parameters(),
-                                             opt.lr) #opt.lr
+                optimizer = torch.optim.Adam(
+                    self.units[operator].parameters(), opt.lr
+                )  # opt.lr
 
             if opt.scheduler:
-                sc = lr_scheduler.StepLR(optimizer, step_size=opt.step_size,
-                                        gamma=opt.gamma)
+                sc = lr_scheduler.StepLR(
+                    optimizer, step_size=opt.step_size, gamma=opt.gamma
+                )
                 self.schedulers[operator] = sc
 
             self.optimizers[operator] = optimizer
@@ -139,15 +157,15 @@ class QPPNet():
         self.input = samp_dicts
 
     def _forward_oneQ_batch(self, samp_batch):
-        '''
+        """
         Calcuates the loss for a batch of queries from one query template
 
         compute a dictionary of losses for each operator
 
         return output_vec, where 1st col is predicted time
-        '''
+        """
         # print(samp_batch)
-        feat_vec = samp_batch['feat_vec']
+        feat_vec = samp_batch["feat_vec"]
         # print(samp_batch['real_node_type'])
 
         # print(samp_batch['node_type'])
@@ -155,22 +173,28 @@ class QPPNet():
         input_vec = torch.from_numpy(feat_vec).to(self.device)
         # print(samp_batch['node_type'], input_vec)
         subplans_time = []
-        for child_plan_dict in samp_batch['children_plan']:
+        for child_plan_dict in samp_batch["children_plan"]:
             child_output_vec, _ = self._forward_oneQ_batch(child_plan_dict)
-            if not child_plan_dict['is_subplan']:
-                input_vec = torch.cat((input_vec, child_output_vec),axis=1)
+            if not child_plan_dict["is_subplan"]:
+                input_vec = torch.cat((input_vec, child_output_vec), axis=1)
                 # first dim is subbatch_size
             else:
-                subplans_time.append(torch.index_select(child_output_vec, 1, torch.zeros(1, dtype=torch.long)))
+                subplans_time.append(
+                    torch.index_select(
+                        child_output_vec, 1, torch.zeros(1, dtype=torch.long)
+                    )
+                )
 
-        expected_len = self.dim_dict[samp_batch['node_type']]
+        expected_len = self.dim_dict[samp_batch["node_type"]]
         if expected_len > input_vec.size()[1]:
-            add_on = torch.zeros(input_vec.size()[0], expected_len - input_vec.size()[1])
-            print(samp_batch['real_node_type'], input_vec.shape, expected_len)
+            add_on = torch.zeros(
+                input_vec.size()[0], expected_len - input_vec.size()[1]
+            )
+            print(samp_batch["real_node_type"], input_vec.shape, expected_len)
             input_vec = torch.cat((input_vec, add_on), axis=1)
 
         # print(samp_batch['node_type'], input_vec)
-        output_vec = self.units[samp_batch['node_type']](input_vec)
+        output_vec = self.units[samp_batch["node_type"]](input_vec)
         # print(output_vec.shape)
         pred_time = torch.index_select(output_vec, 1, torch.zeros(1, dtype=torch.long))
         # pred_time assumed to be the first col
@@ -183,30 +207,40 @@ class QPPNet():
         # if self.test_time:
         #     print(samp_batch['node_type'], pred_time, samp_batch['total_time'])
 
-        loss = (pred_time -
-                torch.from_numpy(samp_batch['total_time']).to(self.device)) ** 2
+        loss = (
+            pred_time - torch.from_numpy(samp_batch["total_time"]).to(self.device)
+        ) ** 2
         # print("loss.shape", loss.shape)
-        self.acc_loss[samp_batch['node_type']].append(loss)
+        self.acc_loss[samp_batch["node_type"]].append(loss)
 
         # added to deal with NaN
         try:
-            assert(not (torch.isnan(output_vec).any()))
+            assert not (torch.isnan(output_vec).any())
         except:
             print("feat_vec", feat_vec, "input_vec", input_vec)
             if torch.cuda.is_available():
-                print(samp_batch['node_type'], "output_vec: ", output_vec,
-                      self.units[samp_batch['node_type']].module.cpu().state_dict())
+                print(
+                    samp_batch["node_type"],
+                    "output_vec: ",
+                    output_vec,
+                    self.units[samp_batch["node_type"]].module.cpu().state_dict(),
+                )
             else:
-                print(samp_batch['node_type'], "output_vec: ", output_vec,
-                      self.units[samp_batch['node_type']].cpu().state_dict())
+                print(
+                    samp_batch["node_type"],
+                    "output_vec: ",
+                    output_vec,
+                    self.units[samp_batch["node_type"]].cpu().state_dict(),
+                )
             exit(-1)
         return output_vec, pred_time
 
     def _forward(self, epoch):
         # self.input is a list of preprocessed plan_vec_dict
         total_loss = torch.zeros(1).to(self.device)
-        total_losses = {operator: [torch.zeros(1).to(self.device)] \
-                        for operator in self.dim_dict}
+        total_losses = {
+            operator: [torch.zeros(1).to(self.device)] for operator in self.dim_dict
+        }
         if self.test:
             test_loss = []
             pred_err = []
@@ -227,12 +261,12 @@ class QPPNet():
             else:
                 epsilon = 0.001
 
-            data_size += len(samp_dict['total_time'])
+            data_size += len(samp_dict["total_time"])
 
             # if idx == 6:
             #     print("feat_vec", samp_dict["feat_vec"])
             if self.test:
-                tt = torch.from_numpy(samp_dict['total_time']).to(self.device)
+                tt = torch.from_numpy(samp_dict["total_time"]).to(self.device)
 
                 test_loss.append(torch.abs(tt - pred_time))
                 curr_pred_err = Metric.pred_err(tt, pred_time, epsilon)
@@ -240,15 +274,20 @@ class QPPNet():
                 # if idx == 6 or \
 
                 # print(samp_dict['feat_vec'])
-                if np.isnan(curr_pred_err.detach()).any() or \
-                   np.isinf(curr_pred_err.detach()).any():
-                    print("feat_vec", samp_dict['feat_vec'])
+                if (
+                    np.isnan(curr_pred_err.detach()).any()
+                    or np.isinf(curr_pred_err.detach()).any()
+                ):
+                    print("feat_vec", samp_dict["feat_vec"])
                     print("pred_time", pred_time)
                     print("total_time", tt)
 
                 all_tt = tt if all_tt is None else torch.cat([tt, all_tt])
-                all_pred_time = pred_time if all_pred_time is None \
-                                else torch.cat([pred_time, all_pred_time])
+                all_pred_time = (
+                    pred_time
+                    if all_pred_time is None
+                    else torch.cat([pred_time, all_pred_time])
+                )
 
                 # if idx in self._test_losses and self._test_losses[idx] == curr_rq:
                 #     print(f"^^^^^^^^^^^^^^^^^^{samp_dict['node_type']} ^^^^^^^^^^^^^^^\n",
@@ -269,32 +308,36 @@ class QPPNet():
                 total_mean_mae += curr_mean_mae * len(tt)
 
                 if epoch % 50 == 0:
-                    print("####### eval by temp: idx {}, test_loss {}, pred_err {}, "\
-                      "rq {}, weighted mae {}, accumulate_err {} "\
-                      .format(idx, torch.mean(torch.abs(tt - pred_time)).item(),
-                              torch.mean(curr_pred_err).item(),
-                              curr_rq, curr_mean_mae,
-                              Metric.accumulate_err(tt, pred_time, epsilon)))
+                    print(
+                        "####### eval by temp: idx {}, test_loss {}, pred_err {}, "
+                        "rq {}, weighted mae {}, accumulate_err {} ".format(
+                            idx,
+                            torch.mean(torch.abs(tt - pred_time)).item(),
+                            torch.mean(curr_pred_err).item(),
+                            curr_rq,
+                            curr_mean_mae,
+                            Metric.accumulate_err(tt, pred_time, epsilon),
+                        )
+                    )
 
             D_size = 0
             subbatch_loss = torch.zeros(1).to(self.device)
             for operator in self.acc_loss:
-                #print(operator, self.acc_loss[operator])
+                # print(operator, self.acc_loss[operator])
                 all_loss = torch.cat(self.acc_loss[operator])
                 D_size += all_loss.shape[0]
-                #print("all_loss.shape",all_loss.shape)
+                # print("all_loss.shape",all_loss.shape)
                 subbatch_loss += torch.sum(all_loss)
 
                 total_losses[operator].append(all_loss)
 
             subbatch_loss = torch.mean(torch.sqrt(subbatch_loss / D_size))
-            #print("subbatch_loss.shape",subbatch_loss.shape)
-            total_loss += subbatch_loss * samp_dict['subbatch_size']
-
+            # print("subbatch_loss.shape",subbatch_loss.shape)
+            total_loss += subbatch_loss * samp_dict["subbatch_size"]
 
         if self.test:
             all_test_loss = torch.cat(test_loss)
-            #print(test_loss[0].shape, test_loss[1].shape, all_test_loss.shape)
+            # print(test_loss[0].shape, test_loss[1].shape, all_test_loss.shape)
             all_test_loss = torch.mean(all_test_loss)
             self.test_loss = all_test_loss
 
@@ -302,27 +345,30 @@ class QPPNet():
             self.pred_err = torch.mean(all_pred_err)
 
             self.rq = Metric.r_q(all_tt, all_pred_time, epsilon)
-            self.accumulate_err = Metric.accumulate_err(all_tt, all_pred_time,
-                                                        epsilon)
+            self.accumulate_err = Metric.accumulate_err(all_tt, all_pred_time, epsilon)
             self.weighted_mae = total_mean_mae / data_size
 
             if epoch % 50 == 0:
-                print("test batch Pred Err: {}, R(q): {}, Accumulated Error: "\
-                      "{}, Weighted MAE: {}".format(self.pred_err, 
-                                                    self.rq,
-                                                    self.accumulate_err,
-                                                    self.weighted_mae))
+                print(
+                    "test batch Pred Err: {}, R(q): {}, Accumulated Error: "
+                    "{}, Weighted MAE: {}".format(
+                        self.pred_err, self.rq, self.accumulate_err, self.weighted_mae
+                    )
+                )
 
         else:
-            self.curr_losses = {operator: torch.mean(torch.cat(total_losses[operator])).item() for operator in self.dim_dict}
+            self.curr_losses = {
+                operator: torch.mean(torch.cat(total_losses[operator])).item()
+                for operator in self.dim_dict
+            }
             self.total_loss = torch.mean(total_loss / self.batch_size)
-        #print("self.total_loss.shape", self.total_loss.shape)
+        # print("self.total_loss.shape", self.total_loss.shape)
 
     def backward(self):
         self.last_total_loss = self.total_loss.item()
         if self.best > self.total_loss.item():
             self.best = self.total_loss.item()
-            self.save_units('best')
+            self.save_units("best")
         self.total_loss.backward()
         self.total_loss = None
 
@@ -365,7 +411,7 @@ class QPPNet():
 
     def save_units(self, epoch):
         for name, unit in self.units.items():
-            save_filename = '%s_net_%s.pth' % (epoch, name)
+            save_filename = "%s_net_%s.pth" % (epoch, name)
             save_path = os.path.join(self.save_dir, save_filename)
 
             if torch.cuda.is_available():
@@ -376,7 +422,7 @@ class QPPNet():
 
     def load(self, epoch):
         for name in self.units:
-            save_filename = '%s_net_%s.pth' % (epoch, name)
+            save_filename = "%s_net_%s.pth" % (epoch, name)
             save_path = os.path.join(self.save_dir, save_filename)
             if not os.path.exists(save_path):
                 raise ValueError("model {} doesn't exist".format(save_path))

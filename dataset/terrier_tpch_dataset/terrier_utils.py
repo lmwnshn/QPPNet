@@ -1,18 +1,21 @@
 import collections
-import pickle
 import json
+import pickle
+from collections import Counter
+
 import numpy as np
 import torch
-from collections import Counter
-from dataset.postgres_tpch_dataset.tpch_utils import PSQLTPCHDataSet
-import dataset.terrier_tpch_dataset.terrier_query_info_1G as tqi_1
+
 import dataset.terrier_tpch_dataset.terrier_query_info_0p1G as tqi_0p1
+import dataset.terrier_tpch_dataset.terrier_query_info_1G as tqi_1
 import dataset.terrier_tpch_dataset.terrier_query_info_10G as tqi_10
+from dataset.postgres_tpch_dataset.tpch_utils import PSQLTPCHDataSet
 
 SCALE = 10000
 
 EPS = 0.001
 TRAIN_TEST_SPLIT = 0.8
+
 
 def get_input_for_all(SF):
     if SF == 1:
@@ -23,6 +26,7 @@ def get_input_for_all(SF):
         tqi = tqi_10
 
     MEM_ADJUST_MAP = getattr(tqi, "MEM_ADJUST_MAP")
+
     def get_input(plan_dict):
         id_name = plan_dict["Node Type"].strip("tpch").upper()
         lst = getattr(tqi, id_name)
@@ -32,28 +36,33 @@ def get_input_for_all(SF):
         if plan_dict["Node Type"] in MEM_ADJUST_MAP:
             feat_vec += [MEM_ADJUST_MAP[plan_dict["Node Type"]]]
         return feat_vec
+
     return get_input
 
-with open('./dataset/terrier_tpch_dataset/terrier_group_dict.json', 'r') as f:
+
+with open("./dataset/terrier_tpch_dataset/terrier_group_dict.json", "r") as f:
     pname_group_dict = json.load(f)
 
-with open('dataset/terrier_tpch_dataset/input_dim_dict.json', 'r') as f:
+with open("dataset/terrier_tpch_dataset/input_dim_dict.json", "r") as f:
     terrier_dim_dict = json.load(f)
 
+
 def get_input_func(data_dir):
-    SF = data_dir.strip('.csv').split('execution_')[1]
-    if '0p1' in SF:
+    SF = data_dir.strip(".csv").split("execution_")[1]
+    if "0p1" in SF:
         num = 0.1
-    elif '10' in SF:
+    elif "10" in SF:
         num = 10
     else:
         num = 1
     TR_GET_INPUT = collections.defaultdict(lambda: get_input_for_all(num))
     return TR_GET_INPUT
 
+
 ###############################################################################
 #       Parsing data from csv files that contain json output of queries       #
 ###############################################################################
+
 
 class TerrierTPCHDataSet(PSQLTPCHDataSet):
     def __init__(self, opt):
@@ -81,56 +90,59 @@ class TerrierTPCHDataSet(PSQLTPCHDataSet):
         train_groups = [[] for j in range(num_grp)]
         test_groups = [[] for j in range(num_grp)]
 
-        print(f"# of samples per query used: {all_samp_num}",
-              f"# of training samples per query used: {self.num_sample_per_q}")
+        print(
+            f"# of samples per query used: {all_samp_num}",
+            f"# of training samples per query used: {self.num_sample_per_q}",
+        )
 
         counter = 0
         for idx, grp in enumerate(all_groups):
-            train_data += grp[:self.num_sample_per_q]
-            train_groups[idx] += grp[:self.num_sample_per_q]
-            test_groups[idx] += grp[self.num_sample_per_q: all_samp_num]
+            train_data += grp[: self.num_sample_per_q]
+            train_groups[idx] += grp[: self.num_sample_per_q]
+            test_groups[idx] += grp[self.num_sample_per_q : all_samp_num]
             self.grp_idxes += [idx] * self.num_sample_per_q
             counter += len(grp)
 
         self.num_grps = [num_grp]
 
-        print("Number of samples per train groups: ",
-              [len(grp) for grp in train_groups])
+        print(
+            "Number of samples per train groups: ", [len(grp) for grp in train_groups]
+        )
 
         self.dataset = train_data
         self.datasize = len(self.dataset)
 
         if not opt.test_time:
             self.mean_range_dict = self.normalize(train_groups)
-            with open('mean_range_dict.pickle', 'wb') as f:
+            with open("mean_range_dict.pickle", "wb") as f:
                 pickle.dump(self.mean_range_dict, f)
         else:
-            with open(opt.mean_range_dict, 'rb') as f:
+            with open(opt.mean_range_dict, "rb") as f:
                 self.mean_range_dict = pickle.load(f)
 
         test_dataset = [self.get_input(grp) for grp in test_groups]
         self.test_dataset = test_dataset
         self.all_dataset = [self.get_input(grp) for grp in all_groups]
 
-    def get_input(self, data): # Helper for sample_data
+    def get_input(self, data):  # Helper for sample_data
         """
-            Vectorize the input of a list of plan_dicts that have the same query plan structure structure (of the same template/group)
+        Vectorize the input of a list of plan_dicts that have the same query plan structure structure (of the same template/group)
 
-            Args:
-            - data: a list of plan_dict, each plan_dict correspond to a query plan in the dataset;
-                    requires that all plan_dicts is of the same query template/group
+        Args:
+        - data: a list of plan_dict, each plan_dict correspond to a query plan in the dataset;
+                requires that all plan_dicts is of the same query template/group
 
-            Returns:
-            - new_samp_dict: a dictionary, where each level has the following attribute:
-                -- node_type      : name of the operator that the pipeline corresponds to
-                -- real_node_type : the pipeline name
-                -- subbatch_size  : number of queries in data
-                -- feat_vec       : a numpy array of shape (batch_size x feat_dim) that's
-                                   the vectorized inputs for all queries in data
-                -- children_plan  : list of dictionaries with each being an output of
-                                   a recursive call to get_input on a child of current node
-                -- total_time     : a vector of prediction target for each query in data
-                -- is_subplan     : if the queries are subplans
+        Returns:
+        - new_samp_dict: a dictionary, where each level has the following attribute:
+            -- node_type      : name of the operator that the pipeline corresponds to
+            -- real_node_type : the pipeline name
+            -- subbatch_size  : number of queries in data
+            -- feat_vec       : a numpy array of shape (batch_size x feat_dim) that's
+                               the vectorized inputs for all queries in data
+            -- children_plan  : list of dictionaries with each being an output of
+                               a recursive call to get_input on a child of current node
+            -- total_time     : a vector of prediction target for each query in data
+            -- is_subplan     : if the queries are subplans
         """
         new_samp_dict = {}
 
@@ -139,19 +151,24 @@ class TerrierTPCHDataSet(PSQLTPCHDataSet):
         new_samp_dict["subbatch_size"] = len(data)
         feat_vec = np.array([self.input_func[jss["Node Type"]](jss) for jss in data])
 
-        feat_vec = (feat_vec + EPS) / (self.mean_range_dict[new_samp_dict["node_type"]][0] + EPS)
-        if 'lineitem' in new_samp_dict["real_node_type"]:
-            feat_vec += np.random.default_rng().normal(loc=0, scale=1, size=feat_vec.shape)
+        feat_vec = (feat_vec + EPS) / (
+            self.mean_range_dict[new_samp_dict["node_type"]][0] + EPS
+        )
+        if "lineitem" in new_samp_dict["real_node_type"]:
+            feat_vec += np.random.default_rng().normal(
+                loc=0, scale=1, size=feat_vec.shape
+            )
         else:
-            feat_vec += np.random.default_rng().normal(loc=0, scale=0.1, size=feat_vec.shape)
+            feat_vec += np.random.default_rng().normal(
+                loc=0, scale=0.1, size=feat_vec.shape
+            )
 
-
-        total_time = [jss['Actual Total Time'] for jss in data]
+        total_time = [jss["Actual Total Time"] for jss in data]
         child_plan_lst = []
-        if 'Plans' in data[0]:
-            for i in range(len(data[0]['Plans'])):
-                child_plan_dict = self.get_input([jss['Plans'][i] for jss in data])
-                child_plan_dict['is_subplan'] = False
+        if "Plans" in data[0]:
+            for i in range(len(data[0]["Plans"])):
+                child_plan_dict = self.get_input([jss["Plans"][i] for jss in data])
+                child_plan_dict["is_subplan"] = False
                 child_plan_lst.append(child_plan_dict)
 
         new_samp_dict["feat_vec"] = np.array(feat_vec).astype(np.float32)
@@ -160,56 +177,59 @@ class TerrierTPCHDataSet(PSQLTPCHDataSet):
 
         return new_samp_dict
 
-    def normalize(self, train_groups): # compute the mean and std vec of each operator
-        feat_vec_col = {operator : [] for operator in terrier_dim_dict}
+    def normalize(self, train_groups):  # compute the mean and std vec of each operator
+        feat_vec_col = {operator: [] for operator in terrier_dim_dict}
 
         def parse_input(data):
             feat_vec = [self.input_func[data[0]["Operator Type"]](jss) for jss in data]
             # print(feat_vec)
-            if 'Plans' in data[0]:
-                for i in range(len(data[0]['Plans'])):
-                    parse_input([jss['Plans'][i] for jss in data])
-            feat_vec_col[data[0]["Operator Type"]].append(np.array(feat_vec).astype(np.float32))
+            if "Plans" in data[0]:
+                for i in range(len(data[0]["Plans"])):
+                    parse_input([jss["Plans"][i] for jss in data])
+            feat_vec_col[data[0]["Operator Type"]].append(
+                np.array(feat_vec).astype(np.float32)
+            )
 
         for grp in train_groups:
             parse_input(grp)
 
         def cmp_mean_range(feat_vec_lst):
-          if len(feat_vec_lst) == 0:
-            return (0, 1)
-          else:
-            total_vec = np.concatenate(feat_vec_lst)
-            return (np.mean(total_vec, axis=0),
-                    np.max(total_vec, axis=0))
+            if len(feat_vec_lst) == 0:
+                return (0, 1)
+            else:
+                total_vec = np.concatenate(feat_vec_lst)
+                return (np.mean(total_vec, axis=0), np.max(total_vec, axis=0))
 
-        mean_range_dict = {operator : cmp_mean_range(feat_vec_col[operator]) \
-                           for operator in terrier_dim_dict}
+        mean_range_dict = {
+            operator: cmp_mean_range(feat_vec_col[operator])
+            for operator in terrier_dim_dict
+        }
         return mean_range_dict
 
     def get_all_plans(self, fname):
         jss = []
         currtree = {"Actual Total Time": 0}
         prev = None
-        f = open(fname, 'r')
+        f = open(fname, "r")
         lines = f.readlines()[1:]
         for line in lines:
-            tokens = line.strip('\n').split(",")
-            if len(tokens[0].split('_')) < 2:
+            tokens = line.strip("\n").split(",")
+            if len(tokens[0].split("_")) < 2:
                 continue
-            group = "_".join(tokens[0].split('_')[1:-1])
+            group = "_".join(tokens[0].split("_")[1:-1])
             if prev is not None:
                 if prev != group:
                     jss.append(currtree)
                     currtree = {"Actual Total Time": 0}
                 else:
                     nexttree = {"Plans": [currtree]}
-                    nexttree['Actual Total Time'] = currtree['Actual Total Time']
+                    nexttree["Actual Total Time"] = currtree["Actual Total Time"]
                     currtree = nexttree
 
-            currtree['Node Type'] = tokens[0].strip(" ")
+            currtree["Node Type"] = tokens[0].strip(" ")
 
-            currtree['Operator Type'] = "operator_" + str(pname_group_dict[tokens[0]])
-            currtree['Actual Total Time'] += float(tokens[-1])
+            currtree["Operator Type"] = "operator_" + str(pname_group_dict[tokens[0]])
+            currtree["Actual Total Time"] += float(tokens[-1])
             prev = group
         # jss is a list of json-transformed dicts, one for each query
         return jss
@@ -219,7 +239,7 @@ class TerrierTPCHDataSet(PSQLTPCHDataSet):
         enum = []
         unique = []
         for plan_dict in data:
-            grp_num = "_".join(plan_dict['Node Type'].split("_")[1:-1])
+            grp_num = "_".join(plan_dict["Node Type"].split("_")[1:-1])
             if grp_num in unique:
                 enum.append(unique.index(grp_num))
             else:
@@ -235,7 +255,9 @@ class TerrierTPCHDataSet(PSQLTPCHDataSet):
     ###############################################################################
     def sample_data(self):
         # dataset: all queries used in training
-        samp = np.random.choice(np.arange(self.datasize), self.batch_size, replace=False)
+        samp = np.random.choice(
+            np.arange(self.datasize), self.batch_size, replace=False
+        )
 
         samp_group = [[] for j in range(self.num_grps[0])]
         for idx in samp:

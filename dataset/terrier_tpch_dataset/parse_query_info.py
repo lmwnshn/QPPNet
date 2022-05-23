@@ -1,8 +1,8 @@
-
+import json
 
 import terrier_query_info as tqi
-import json
-'''
+
+"""
 col_set = set()
 new_dict = {}
 ct = 0
@@ -20,7 +20,7 @@ with open("terrier_group_dict.json", "w+") as f:
     json.dump(new_dict, f)
 
 print(new_dict)
-'''
+"""
 
 with open("terrier_group_dict.json", "r") as f:
     group_dict = json.load(f)
