@@ -4,12 +4,11 @@ import pickle
 from collections import Counter
 
 import numpy as np
-import torch
 
 import dataset.terrier_tpch_dataset.terrier_query_info_0p1G as tqi_0p1
 import dataset.terrier_tpch_dataset.terrier_query_info_1G as tqi_1
 import dataset.terrier_tpch_dataset.terrier_query_info_10G as tqi_10
-from dataset.postgres_tpch_dataset.tpch_utils import PSQLTPCHDataSet
+from pg_utils import PostgresDataSet
 
 SCALE = 10000
 
@@ -64,7 +63,7 @@ def get_input_func(data_dir):
 ###############################################################################
 
 
-class TerrierTPCHDataSet(PSQLTPCHDataSet):
+class TerrierTPCHDataSet(PostgresDataSet):
     def __init__(self, opt):
         self.batch_size = opt.batch_size
         self.num_q = 1

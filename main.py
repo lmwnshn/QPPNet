@@ -1,17 +1,17 @@
 import argparse
+import json
 import time
 
 import torch
 
 from dataset.oltp_dataset.oltp_utils import OLTPDataSet
-from dataset.postgres_tpch_dataset.tpch_utils import PSQLTPCHDataSet
 from dataset.terrier_tpch_dataset.terrier_utils import TerrierTPCHDataSet
 from model_arch import QPPNet
+from pg_utils import PostgresDataSet
 
 parser = argparse.ArgumentParser(description="QPPNet Arg Parser")
 
-# Environment arguments
-# required
+# Environment arguments required
 
 parser.add_argument(
     "--data_dir", type=str, default="./res_by_temp/", help="Dir containing train data"
@@ -20,14 +20,13 @@ parser.add_argument(
 parser.add_argument(
     "--dataset",
     type=str,
-    default="PSQLTPCH",
-    help="Select dataset [PSQLTPCH | TerrierTPCH | OLTP]",
+    default="POSTGRES",
+    help="Select dataset [POSTGRES | TerrierTPCH | OLTP]",
 )
 
 parser.add_argument("--test_time", action="store_true", help="if in testing mode")
 
 parser.add_argument(
-    "-dir",
     "--save_dir",
     type=str,
     default="./saved_model",
@@ -63,7 +62,6 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "-s",
     "--start_epoch",
     type=int,
     default=0,
@@ -71,7 +69,6 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "-t",
     "--end_epoch",
     type=int,
     default=200,
@@ -83,6 +80,16 @@ parser.add_argument("-epoch_freq", "--save_latest_epoch_freq", type=int, default
 parser.add_argument("-logf", "--logfile", type=str, default="train_loss.txt")
 
 parser.add_argument("--mean_range_dict", type=str)
+
+parser.add_argument("--db_name", type=str, default="qppnet_db")
+parser.add_argument("--db_user", type=str, default="qppnet_user")
+parser.add_argument("--db_pass", type=str, default="qppnet_pass")
+
+parser.add_argument(
+    "--data_shuffle_hack",
+    action="store_true",
+    help="True if data shuffle hack should be done to try to avoid empty groups.",
+)
 
 
 def save_opt(opt, logf):
@@ -107,16 +114,22 @@ def save_opt(opt, logf):
 if __name__ == "__main__":
     opt = parser.parse_args()
 
-    if opt.dataset == "PSQLTPCH":
-        dataset = PSQLTPCHDataSet(opt)
+    if opt.dataset == "POSTGRES":
+        dataset = PostgresDataSet(opt)
+        dim_dict = dataset.db_snapshot.dim_dict
+
     elif opt.dataset == "TerrierTPCH":
         dataset = TerrierTPCHDataSet(opt)
+        with open("dataset/terrier_tpch_dataset/input_dim_dict.json", "r") as f:
+            dim_dict = json.load(f)
     else:
         dataset = OLTPDataSet(opt)
+        with open("./dataset/oltp_dataset/tpcc_dim_dict.json", "r") as f:
+            dim_dict = json.load(f)
 
     print("dataset_size", dataset.datasize)
     torch.set_default_tensor_type(torch.FloatTensor)
-    qpp = QPPNet(opt)
+    qpp = QPPNet(opt, dim_dict)
 
     total_iter = 0
 

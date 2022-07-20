@@ -1,12 +1,9 @@
-import collections
-import json
 import pickle
 from collections import Counter, defaultdict
 
 import numpy as np
-import torch
 
-from dataset.postgres_tpch_dataset.tpch_utils import PSQLTPCHDataSet
+from pg_utils import PostgresDataSet
 
 SCALE = 10
 
@@ -34,7 +31,7 @@ ALL_OPS = [
 ###############################################################################
 
 
-class OLTPDataSet(PSQLTPCHDataSet):
+class OLTPDataSet(PostgresDataSet):
     def __init__(self, opt):
         self.batch_size = opt.batch_size
         self.num_q = 1

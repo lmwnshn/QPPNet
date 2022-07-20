@@ -12,18 +12,6 @@ from torch.optim import lr_scheduler
 
 from metric import Metric
 
-basic = 3
-
-# TPCH
-from dataset.postgres_tpch_dataset.tpch_utils import tpch_dim_dict
-
-# Terrier
-with open("dataset/terrier_tpch_dataset/input_dim_dict.json", "r") as f:
-    terrier_dim_dict = json.load(f)
-
-# TPCC
-with open("./dataset/oltp_dataset/tpcc_dim_dict.json", "r") as f:
-    tpcc_dim_dict = json.load(f)
 
 # For computing loss
 def squared_diff(output, target):
@@ -90,7 +78,7 @@ class NeuralUnit(nn.Module):
 
 
 class QPPNet:
-    def __init__(self, opt):
+    def __init__(self, opt, dim_dict):
         self.device = (
             torch.device("cuda:0")
             if torch.cuda.is_available()
@@ -101,13 +89,7 @@ class QPPNet:
         self.test_time = opt.test_time
         self.batch_size = opt.batch_size
         self.dataset = opt.dataset
-
-        if opt.dataset == "PSQLTPCH":
-            self.dim_dict = tpch_dim_dict
-        elif opt.dataset == "TerrierTPCH":
-            self.dim_dict = terrier_dim_dict
-        else:
-            self.dim_dict = tpcc_dim_dict
+        self.dim_dict = dim_dict
 
         self.last_total_loss = None
         self.last_pred_err = None
@@ -256,7 +238,7 @@ class QPPNet:
 
             _, pred_time = self._forward_oneQ_batch(samp_dict)
 
-            if self.dataset == "PSQLTPCH":
+            if self.dataset == "POSTGRES":
                 epsilon = torch.finfo(pred_time.dtype).eps
             else:
                 epsilon = 0.001
