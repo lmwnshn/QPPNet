@@ -1,5 +1,7 @@
 # QPPNet in PyTorch                                                  [![DOI](https://zenodo.org/badge/267330400.svg)](https://zenodo.org/badge/latestdoi/267330400)
 
+**The README below was written for the release tagged [rabbit721](https://github.com/cmu-db/QPPNet/releases/tag/rabbit721).**
+
 This code contains a sample implementation for [Plan-Structured Deep Neural Network Models for Query Performance Prediction](https://arxiv.org/pdf/1902.00132.pdf) presented at VLDB 2019, and the code for training/testing on
 
 - TPC-H queries generated using https://github.com/gregrahn/tpch-kit.git and benchmarked with Postgres
