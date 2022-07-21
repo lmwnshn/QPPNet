@@ -66,9 +66,6 @@ class PostgresDataSet:
         self.num_q = len(fnames)
         self.num_sample_per_q = int(num_per_q * train_test_split)
 
-        data = []
-        all_groups, all_groups_test = [], []
-
         self.grp_idxes = []
         self.num_grps = [0] * self.num_q
         for i, fname in enumerate(fnames):
@@ -85,40 +82,54 @@ class PostgresDataSet:
 
             # TODO(WAN): For some reason, we reimplement train/test splitting. However, the rest of the code is also
             #            not robust to empty groups.
-            if opt.data_shuffle_hack:
-                assignments = list(zip(query_plans, group_assignments))
-                random.shuffle(assignments)
-                query_plans, group_assignments = zip(*assignments)
+            base_assignments = list(zip(query_plans, group_assignments))
 
-            assert len(query_plans) == len(
-                group_assignments
-            ), "Each query plan must be assigned a group."
-            assignments = zip(query_plans, group_assignments)
-            # Collect the query plans above by their assigned group.
-            groups = [[] for _ in range(num_groups)]
-            for query_plan, group_idx in assignments:
-                groups[group_idx].append(query_plan)
-            # Accumulate the groups.
-            all_groups += groups
+            shuffle_attempts = 500
+            while True:
+                data = []
+                all_groups, all_groups_test = [], []
 
-            # Record the number of groups for this batch of data.
-            self.num_grps[i] = num_groups
+                query_plans, group_assignments = zip(*base_assignments)
+                assert len(query_plans) == len(
+                    group_assignments
+                ), "Each query plan must be assigned a group."
+                assignments = zip(query_plans, group_assignments)
+                # Collect the query plans above by their assigned group.
+                groups = [[] for _ in range(num_groups)]
+                for query_plan, group_idx in assignments:
+                    groups[group_idx].append(query_plan)
+                # Accumulate the groups.
+                all_groups += groups
 
-            # ---
-            # This code block is relevant to train.
+                # Record the number of groups for this batch of data.
+                self.num_grps[i] = num_groups
 
-            # We take the first num_sample_per_q query plans for training.
-            self.grp_idxes += group_assignments[: self.num_sample_per_q]
-            data += query_plans[: self.num_sample_per_q]
+                # ---
+                # This code block is relevant to train.
 
-            # ---
-            # This code block is relevant to test.
+                # We take the first num_sample_per_q query plans for training.
+                self.grp_idxes += group_assignments[: self.num_sample_per_q]
+                data += query_plans[: self.num_sample_per_q]
 
-            # We take the remaining query plans for testing.
-            test_groups = [[] for _ in range(num_groups)]
-            for j, grp_idx in enumerate(group_assignments[self.num_sample_per_q :]):
-                test_groups[grp_idx].append(query_plans[self.num_sample_per_q + j])
-            all_groups_test += test_groups
+                # ---
+                # This code block is relevant to test.
+
+                # We take the remaining query plans for testing.
+                test_groups = [[] for _ in range(num_groups)]
+                for j, grp_idx in enumerate(group_assignments[self.num_sample_per_q :]):
+                    test_groups[grp_idx].append(query_plans[self.num_sample_per_q + j])
+                all_groups_test += test_groups
+
+                ok = all([len(x) > 0 for x in all_groups_test])
+                if ok:
+                    break
+                elif not opt.data_shuffle_hack or shuffle_attempts == 0:
+                    raise NotImplementedError("Train/test split is busted.")
+                else:
+                    print(f"Reshuffle hack! Shuffle attempt: {shuffle_attempts}")
+                    print([len(x) for x in all_groups_test])
+                    shuffle_attempts -= 1
+                    random.Random(15721+shuffle_attempts).shuffle(base_assignments)
 
         self.dataset = data
         self.datasize = len(self.dataset)
