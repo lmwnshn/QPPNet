@@ -91,6 +91,12 @@ parser.add_argument(
     help="True if data shuffle hack should be done to try to avoid empty groups.",
 )
 
+parser.add_argument(
+    "--db_snapshot_path",
+    type=str,
+    default="database_snapshot.dill",
+)
+
 
 def save_opt(opt, logf):
     """Print and save options

@@ -41,7 +41,7 @@ class PgSnapshot:
             "Subquery Scan",
             "Gather",
         ]
-        self.join_types = ["semi", "inner", "anti", "full", "right"]
+        self.join_types = ["semi", "inner", "anti", "full", "right", "left"]
         self.parent_rel_types = ["inner", "outer", "subquery"]
         self.sort_algos = ["quicksort", "top-n heapsort"]
         self.aggreg_strats = ["plain", "sorted", "hashed"]

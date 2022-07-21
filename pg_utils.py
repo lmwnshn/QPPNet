@@ -1,7 +1,9 @@
 import json
 import os
 import random
+from pathlib import Path
 
+import dill
 import numpy as np
 
 from pg_snapshot import PgSnapshot
@@ -36,7 +38,12 @@ class PostgresDataSet:
         self._rng = np.random.default_rng(seed=15721)
         self.batch_size = opt.batch_size
 
-        self.db_snapshot = PgSnapshot(opt.db_name, opt.db_user, opt.db_pass)
+        if not Path(opt.db_snapshot_path).exists():
+            db_snapshot = PgSnapshot(opt.db_name, opt.db_user, opt.db_pass)
+            with open(opt.db_snapshot_path, "wb") as f:
+                dill.dump(db_snapshot, f)
+        with open(opt.db_snapshot_path, "rb") as f:
+            self.db_snapshot = dill.load(f)
         self.input_func = self.db_snapshot.all_input_funcs
 
         # Each file in the data directory should be a .txt containing psql output that includes the
@@ -46,10 +53,14 @@ class PostgresDataSet:
         fnames = [fname for fname in os.listdir(opt.data_dir) if "csv" in fname]
         fnames = sorted(fnames, key=lambda fname: int(fname.split("temp")[1][:-4]))
         if len(fnames) == 0:
-            fnames = sorted([fname for fname in os.listdir(opt.data_dir) if fname.endswith(".txt")])
+            fnames = sorted(
+                [fname for fname in os.listdir(opt.data_dir) if fname.endswith(".txt")]
+            )
         print(fnames)
 
-        num_per_q = min(len(self.get_all_plans(opt.data_dir + "/" + fname)) for fname in fnames)
+        num_per_q = min(
+            len(self.get_all_plans(opt.data_dir + "/" + fname)) for fname in fnames
+        )
         self.num_per_q = num_per_q
         print(f"Using {self.num_per_q=}")
         self.num_q = len(fnames)
@@ -79,7 +90,9 @@ class PostgresDataSet:
                 random.shuffle(assignments)
                 query_plans, group_assignments = zip(*assignments)
 
-            assert len(query_plans) == len(group_assignments), "Each query plan must be assigned a group."
+            assert len(query_plans) == len(
+                group_assignments
+            ), "Each query plan must be assigned a group."
             assignments = zip(query_plans, group_assignments)
             # Collect the query plans above by their assigned group.
             groups = [[] for _ in range(num_groups)]
@@ -296,6 +309,7 @@ class PostgresDataSet:
                 total_time : int            : Vectorized prediction targets for each query in the data.
         """
         # The data[0] reference assumes that all query plans have identical structure!
+        assert len(data) > 0, "No data?"
         node_type = data[0]["Node Type"]
         is_subplan = "Subplan Name" in data[0]
         subbatch_size = len(data)
