@@ -4,8 +4,8 @@ import time
 
 import torch
 
-from dataset.oltp_dataset.oltp_utils import OLTPDataSet
-from dataset.terrier_tpch_dataset.terrier_utils import TerrierTPCHDataSet
+# from dataset.oltp_dataset.oltp_utils import OLTPDataSet
+# from dataset.terrier_tpch_dataset.terrier_utils import TerrierTPCHDataSet
 from model_arch import QPPNet
 from pg_utils import PostgresDataSet
 
@@ -21,7 +21,7 @@ parser.add_argument(
     "--dataset",
     type=str,
     default="POSTGRES",
-    help="Select dataset [POSTGRES | TerrierTPCH | OLTP]",
+    help="Select dataset [POSTGRES]",
 )
 
 parser.add_argument("--test_time", action="store_true", help="if in testing mode")
@@ -119,10 +119,12 @@ if __name__ == "__main__":
         dim_dict = dataset.db_snapshot.dim_dict
 
     elif opt.dataset == "TerrierTPCH":
+        raise NotImplementedError("Disabled.")
         dataset = TerrierTPCHDataSet(opt)
         with open("dataset/terrier_tpch_dataset/input_dim_dict.json", "r") as f:
             dim_dict = json.load(f)
     else:
+        raise NotImplementedError("Disabled.")
         dataset = OLTPDataSet(opt)
         with open("./dataset/oltp_dataset/tpcc_dim_dict.json", "r") as f:
             dim_dict = json.load(f)
