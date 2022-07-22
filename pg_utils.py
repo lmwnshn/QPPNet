@@ -68,6 +68,10 @@ class PostgresDataSet:
 
         self.grp_idxes = []
         self.num_grps = [0] * self.num_q
+
+        data = []
+        all_groups, all_groups_test = [], []
+
         for i, fname in enumerate(fnames):
             # Extract all the query plans from the current file.
             query_plans = self.get_all_plans(opt.data_dir + "/" + fname)
@@ -78,58 +82,50 @@ class PostgresDataSet:
             # Group the query plans, i.e., hash each query plan and combine queries plans with the
             # same hash into the same group. We obtain a vector denoting each query plan's group assignment,
             # and the total number of groups.
-            group_assignments, num_groups = self.grouping(query_plans)
+            base_assignments, num_groups = self.grouping(query_plans)
 
             # TODO(WAN): For some reason, we reimplement train/test splitting. However, the rest of the code is also
             #            not robust to empty groups.
-            base_assignments = list(zip(query_plans, group_assignments))
+            base_assignments = list(zip(query_plans, base_assignments))
 
-            shuffle_attempts = 500
-            while True:
-                data = []
-                all_groups, all_groups_test = [], []
+            query_plans, group_assignments = zip(*base_assignments)
+            assert len(query_plans) == len(
+                group_assignments
+            ), "Each query plan must be assigned a group."
+            assignments = zip(query_plans, group_assignments)
+            # Collect the query plans above by their assigned group.
+            groups = [[] for _ in range(num_groups)]
+            for query_plan, group_idx in assignments:
+                groups[group_idx].append(query_plan)
 
-                query_plans, group_assignments = zip(*base_assignments)
-                assert len(query_plans) == len(
-                    group_assignments
-                ), "Each query plan must be assigned a group."
-                assignments = zip(query_plans, group_assignments)
-                # Collect the query plans above by their assigned group.
-                groups = [[] for _ in range(num_groups)]
-                for query_plan, group_idx in assignments:
-                    groups[group_idx].append(query_plan)
-                # Accumulate the groups.
-                all_groups += groups
+            # Accumulate the groups.
+            all_groups += groups
 
-                # Record the number of groups for this batch of data.
-                self.num_grps[i] = num_groups
+            # Record the number of groups for this batch of data.
+            self.num_grps[i] = num_groups
 
-                # ---
-                # This code block is relevant to train.
+            # ---
+            # This code block is relevant to train.
 
-                # We take the first num_sample_per_q query plans for training.
-                self.grp_idxes += group_assignments[: self.num_sample_per_q]
-                data += query_plans[: self.num_sample_per_q]
+            # We take the first num_sample_per_q query plans for training.
+            self.grp_idxes += group_assignments[: self.num_sample_per_q]
+            print(f"data[{len(data)}:{len(data)+self.num_sample_per_q}] from {fname}")
+            data += query_plans[: self.num_sample_per_q]
 
-                # ---
-                # This code block is relevant to test.
+            # ---
+            # This code block is relevant to test.
 
-                # We take the remaining query plans for testing.
-                test_groups = [[] for _ in range(num_groups)]
-                for j, grp_idx in enumerate(group_assignments[self.num_sample_per_q :]):
-                    test_groups[grp_idx].append(query_plans[self.num_sample_per_q + j])
-                all_groups_test += test_groups
+            # We take the remaining query plans for testing.
+            test_groups = [[] for _ in range(num_groups)]
+            for j, grp_idx in enumerate(group_assignments[self.num_sample_per_q :]):
+                test_groups[grp_idx].append(query_plans[self.num_sample_per_q + j])
+            all_groups_test += test_groups
 
-                ok = all([len(x) > 0 for x in all_groups_test])
-                if ok:
-                    break
-                elif not opt.data_shuffle_hack or shuffle_attempts == 0:
-                    raise NotImplementedError("Train/test split is busted.")
-                else:
-                    print(f"Reshuffle hack! Shuffle attempt: {shuffle_attempts}")
-                    print([len(x) for x in all_groups_test])
-                    shuffle_attempts -= 1
-                    random.Random(15721+shuffle_attempts).shuffle(base_assignments)
+            ok = all([len(x) > 0 for x in all_groups_test])
+            if ok:
+                continue
+            else:
+                raise NotImplementedError("Train/test split is busted.")
 
         self.dataset = data
         self.datasize = len(self.dataset)
@@ -246,6 +242,15 @@ class PostgresDataSet:
         # jss is a list of json-transformed dicts, one for each query
         return jss
 
+    @staticmethod
+    def _hash_plan_dict(plan_dict):
+        # TODO(WAN): Computing hashes is embarassingly parallel with a collect operation at the end.
+        res = plan_dict["Node Type"]
+        if "Plans" in plan_dict:
+            for chld in plan_dict["Plans"]:
+                res += PostgresDataSet._hash_plan_dict(chld)
+        return res
+
     def grouping(self, query_plans):
         """
         Group the query plans.
@@ -266,19 +271,11 @@ class PostgresDataSet:
         num_groups : int
             The number of groups, where each group represents a distinct query plan.
         """
-        # TODO(WAN): Computing hashes is embarassingly parallel with a collect operation at the end.
-        def hash(plan_dict):
-            res = plan_dict["Node Type"]
-            if "Plans" in plan_dict:
-                for chld in plan_dict["Plans"]:
-                    res += hash(chld)
-            return res
-
         counter = 0
         string_hash = []
         enum = []
         for plan_dict in query_plans:
-            string = hash(plan_dict)
+            string = PostgresDataSet._hash_plan_dict(plan_dict)
             try:
                 idx = string_hash.index(string)
                 enum.append(idx)
@@ -287,6 +284,7 @@ class PostgresDataSet:
                 counter += 1
                 enum.append(idx)
                 string_hash.append(string)
+                print(enum, string)
         print(f"{counter} distinct templates identified")
         print(f"Operators: {string_hash}")
         assert counter > 0, "There must be at least one query plan."
@@ -388,10 +386,26 @@ class PostgresDataSet:
 
         # Construct the sampling groups; for each query, there are num_grps[i] many groups.
         # Then for each query, for each group, we have an empty list to start off with.
-        samp_group = [[[] for _ in range(self.num_grps[i])] for i in range(self.num_q)]
-        # For each index to be sampled,
+        # i.e., samp_group = [
+        #   [---query 1---], # (idx 0)
+        #   [---query 2---], # (idx 1)
+        #   [     ...     ],
+        #   [---query n---], # (idx n-1)
+        # ]
+        # where query i itself is [[], [], ..., []] for num_grps[i] many elements.
+        # Later, the empty lists of query i will be filled with (assumed homogeneous) query plans.
+        samp_group = []
+        for i in range(self.num_q):
+            samples_for_this_query = []
+            num_groups_for_this_query = self.num_grps[i]
+            for _ in range(num_groups_for_this_query):
+                samples_for_this_query.append([])
+            samp_group.append(samples_for_this_query)
+        string_group = [["" for _ in range(self.num_grps[i])] for i in range(self.num_q)]
+
+        # For each index in the original dataset to be sampled,
         for idx in samp:
-            # Get the corresponding group assignments.
+            # Get the corresponding group assignments for those datapoints.
             grp_idx = self.grp_idxes[idx]
             # TODO(WAN): I spent ten minutes refactoring out, naming, and staring at this line of code.
             #            This works under the assumption that each contiguous num_sample_per_q block corresponds to
@@ -401,9 +415,27 @@ class PostgresDataSet:
             query_plan = self.dataset[idx]
             samp_group[query_bucket][grp_idx].append(query_plan)
 
+
+            first_qp = samp_group[query_bucket][grp_idx][0]
+            last_qp = samp_group[query_bucket][grp_idx][-1]
+            first_qp_hash = PostgresDataSet._hash_plan_dict(first_qp)
+            last_qp_hash = PostgresDataSet._hash_plan_dict(last_qp)
+
+            if string_group[query_bucket][grp_idx] not in ["", last_qp_hash]:
+                breakpoint()
+            string_group[query_bucket][grp_idx] = last_qp_hash
+            if not first_qp_hash == last_qp_hash:
+                breakpoint()
+
+        # parsed_input = [
+        #   [get_input(q1group1), get_input(q1group2), ..., get_input(q1groupN1)],
+        #   [get_input(q2group1), get_input(q2group2), ..., get_input(q2groupN2)],
+        #   [     ...     ],
+        #   [get_input(qNgroup1), get_input(qNgroup2), ..., get_input(qNgroupNN)],
+        # ]
         parsed_input = []
-        for i, query_groups in enumerate(samp_group):
-            for group in query_groups:
+        for groups_for_a_given_query in samp_group:
+            for group in groups_for_a_given_query:
                 if len(group) != 0:
                     parsed_input.append(self.get_input(group))
 
