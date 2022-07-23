@@ -84,6 +84,19 @@ class PostgresDataSet:
             # and the total number of groups.
             base_assignments, num_groups = self.grouping(query_plans)
 
+            # Train/test shenanigans.
+            if opt.data_shuffle_hack:
+                if len(set(base_assignments[self.num_sample_per_q:])) != num_groups:
+                    swap_indexes = []
+                    cur_swap_index = self.num_sample_per_q
+                    for group in range(num_groups):
+                        target_index = base_assignments.index(group)
+                        cur_swap_index += 1
+                        swap_indexes.append((target_index, cur_swap_index))
+                    for a, b in swap_indexes:
+                        query_plans[b], query_plans[a] = query_plans[a], query_plans[b]
+                    base_assignments, num_groups = self.grouping(query_plans)
+
             # TODO(WAN): For some reason, we reimplement train/test splitting. However, the rest of the code is also
             #            not robust to empty groups.
             base_assignments = list(zip(query_plans, base_assignments))
@@ -125,7 +138,7 @@ class PostgresDataSet:
             if ok:
                 continue
             else:
-                raise NotImplementedError("Train/test split is busted.")
+                raise NotImplementedError(f"Train/test split is busted, can't handle empty group.")
 
         self.dataset = data
         self.datasize = len(self.dataset)
@@ -284,7 +297,6 @@ class PostgresDataSet:
                 counter += 1
                 enum.append(idx)
                 string_hash.append(string)
-                print(enum, string)
         print(f"{counter} distinct templates identified")
         print(f"Operators: {string_hash}")
         assert counter > 0, "There must be at least one query plan."
@@ -415,17 +427,11 @@ class PostgresDataSet:
             query_plan = self.dataset[idx]
             samp_group[query_bucket][grp_idx].append(query_plan)
 
-
             first_qp = samp_group[query_bucket][grp_idx][0]
             last_qp = samp_group[query_bucket][grp_idx][-1]
             first_qp_hash = PostgresDataSet._hash_plan_dict(first_qp)
             last_qp_hash = PostgresDataSet._hash_plan_dict(last_qp)
-
-            if string_group[query_bucket][grp_idx] not in ["", last_qp_hash]:
-                breakpoint()
-            string_group[query_bucket][grp_idx] = last_qp_hash
-            if not first_qp_hash == last_qp_hash:
-                breakpoint()
+            assert first_qp_hash == last_qp_hash, "This POS again?"
 
         # parsed_input = [
         #   [get_input(q1group1), get_input(q1group2), ..., get_input(q1groupN1)],
