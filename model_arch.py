@@ -291,14 +291,16 @@ class QPPNet:
 
                 if epoch % 50 == 0:
                     print(
-                        "####### eval by temp: idx {}, test_loss {}, pred_err {}, "
-                        "rq {}, weighted mae {}, accumulate_err {} ".format(
+                        "####### eval by temp: fname {} idx {}, test_loss {}, pred_err {}, "
+                        "rq {}, weighted mae {}, accumulate_err {}, {} {}".format(
+                            samp_dict["_dbg_filename"],
                             idx,
                             torch.mean(torch.abs(tt - pred_time)).item(),
                             torch.mean(curr_pred_err).item(),
                             curr_rq,
                             curr_mean_mae,
                             Metric.accumulate_err(tt, pred_time, epsilon),
+                            tt, pred_time,
                         )
                     )
 

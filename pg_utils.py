@@ -253,6 +253,8 @@ class PostgresDataSet:
         strings = [s for s in jsonstrs if s[-1] == "]"]
         jss = [json.loads(s)[0]["Plan"] for s in strings]
         # jss is a list of json-transformed dicts, one for each query
+        for elem in jss:
+            elem["_dbg_filename"] = fname
         return jss
 
     @staticmethod
@@ -305,7 +307,7 @@ class PostgresDataSet:
         ), "Each input query plan must have been assigned a group."
         return enum, counter
 
-    def get_input(self, data):
+    def get_input(self, data, _dbg_filename=None):
         """
         Vectorize the input of a list of queries that have the same plan structure.
 
@@ -355,13 +357,15 @@ class PostgresDataSet:
         scale = 100
         total_time_arr = np.array(total_time_s).astype(np.float32) / scale
 
+        _dbg_filename = data[0]["_dbg_filename"] if _dbg_filename is None else _dbg_filename
+
         # Featurize children plans. Note that the data[0] again assumes identical query plan structure!
         child_plan_lst = []
         if "Plans" in data[0]:
             num_children = len(data[0]["Plans"])
             for child_idx in range(num_children):
                 child = [jss["Plans"][child_idx] for jss in data]
-                child_plan_dict = self.get_input(child)
+                child_plan_dict = self.get_input(child, _dbg_filename=_dbg_filename)
                 child_plan_lst.append(child_plan_dict)
 
         new_samp_dict = {
@@ -371,6 +375,8 @@ class PostgresDataSet:
             "children_plan": child_plan_lst,
             "feat_vec": feat_vec,
             "total_time": total_time_arr,
+            "_dbg_original_sample": data[0],
+            "_dbg_filename": _dbg_filename,
         }
         return new_samp_dict
 
